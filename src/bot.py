@@ -23,6 +23,9 @@ from telegram.ext import (
 )
 
 # Import tool
+import sys
+import os
+sys.path.insert(0, "/app/src")
 from tools.shopee import search_shopee
 
 SYSTEM_PROMPT = """
