@@ -1,153 +1,140 @@
 #!/usr/bin/env python3
-"""Shopee Hunter Bot - Professional Version"""
+"""Shopee Hunter Bot - AI Comparison + Bảng So Sánh"""
 
 import os
 import logging
-import sys
 import httpx
 import json
-from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
-
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# Logging
-logging.basicConfig(
-    format='%(asctime)s | %(levelname)s | %(message)s',
-    level=logging.INFO,
-    datefmt='%H:%M:%S'
-)
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# ====================== HEALTH SERVER ======================
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ok")
-    def log_message(self, format, *args):
-        pass  # Tắt log spam
-
-def run_health_server():
-    server = HTTPServer(("0.0.0.0", 8080), HealthHandler)
-    log.info("Health server listening on port 8080")
-    server.serve_forever()
-
-# ====================== SEARCH FUNCTION ======================
-async def search_shopee(keyword: str, limit: int = 5):
-    """Tìm kiếm sản phẩm trên Shopee qua SerpAPI"""
+async def search_shopee(keyword: str, limit: int = 6):
     api_key = os.getenv("SERPAPI_KEY")
     if not api_key:
-        return [{"name": "❌ Chưa cấu hình SERPAPI_KEY", "price": "", "link": ""}]
+        return []
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
                 "https://serpapi.com/search",
                 params={
-                    "engine": "google",
-                    "q": f"{keyword} site:shopee.vn",
+                    "engine": "google_shopping",
+                    "q": keyword,
                     "api_key": api_key,
                     "num": 15,
                     "gl": "vn",
                     "hl": "vi"
                 }
             )
-            data = response.json()
+            data = resp.json()
 
         products = []
-        # Lấy từ shopping results
         for item in data.get("shopping_results", [])[:limit]:
-            products.append({
-                "name": item.get("title", "Không có tên"),
-                "price": item.get("price", "Liên hệ"),
-                "link": item.get("link", "#")
-            })
+            if "shopee.vn" in item.get("link", "").lower():
+                products.append({
+                    "name": item.get("title", "N/A"),
+                    "price": item.get("price", "N/A"),
+                    "link": item.get("link", "#")
+                })
+        return products
+    except:
+        return []
 
-        # Nếu không có, lấy từ organic results
-        if not products:
-            for item in data.get("organic_results", [])[:limit]:
-                if "shopee.vn" in item.get("link", ""):
-                    products.append({
-                        "name": item.get("title", "Không có tên"),
-                        "price": "Giá trên Shopee",
-                        "link": item.get("link", "#")
-                    })
 
-        return products[:limit]
+async def ai_analyze_and_compare(products: list, query: str):
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_BASE_URL")
+        )
+
+        prompt = f"""
+Bạn là chuyên gia tư vấn mua sắm Shopee.
+Từ khóa: "{query}"
+
+Danh sách sản phẩm:
+{json.dumps(products, ensure_ascii=False, indent=2)}
+
+Hãy phân tích và trả lời bằng **tiếng Việt**, theo cấu trúc sau:
+
+1. **Bảng so sánh** (dùng Markdown table)
+2. **Sản phẩm tốt nhất** + lý do
+3. **Gợi ý giá tốt** (nên mua ở mức giá nào)
+4. **Khuyến nghị cuối cùng** cho người dùng
+
+Viết ngắn gọn, dễ hiểu, có emoji.
+"""
+
+        response = await client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gemini-2.0-flash"),
+            messages=[
+                {"role": "system", "content": "Bạn là chuyên gia so sánh sản phẩm Shopee khách quan và thông minh."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1500,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
 
     except Exception as e:
-        log.error(f"Search error: {e}")
-        return [{"name": f"Lỗi tìm kiếm: {str(e)}", "price": "", "link": ""}]
+        log.error(f"AI Error: {e}")
+        # Fallback table
+        response = "**Bảng so sánh nhanh:**\n\n"
+        response += "| STT | Tên sản phẩm | Giá | Link |\n"
+        response += "|-----|--------------|-----|------|\n"
+        for i, p in enumerate(products, 1):
+            response += f"| {i} | {p.get('name')[:50]}... | {p.get('price')} | [Mua]({p.get('link')}) |\n"
+        return response + "\n❌ Không thể phân tích chi tiết do lỗi AI."
 
 
-# ====================== HANDLER ======================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    if not update.message:
         return
 
     text = update.message.text.strip()
     user_id = str(update.effective_user.id)
 
-    # Kiểm tra quyền
-    allowed_id = os.getenv("ALLOWED_USER_ID")
-    if allowed_id and user_id != allowed_id:
-        await update.message.reply_text("❌ Bạn không có quyền sử dụng bot này.")
+    if os.getenv("ALLOWED_USER_ID") and user_id != os.getenv("ALLOWED_USER_ID"):
+        await update.message.reply_text("❌ Bạn không có quyền sử dụng bot.")
         return
 
     if text.startswith('/start'):
         await update.message.reply_text(
-            "👋 *Chào bạn!* Tôi là Shopee Hunter Bot\n\n"
-            "Gõ từ khóa sản phẩm bạn muốn tìm, ví dụ:\n"
+            "👋 *Shopee Hunter Bot*\n\n"
+            "Tôi có thể giúp bạn:\n"
+            "• Tìm sản phẩm\n"
+            "• So sánh nhiều sản phẩm\n"
+            "• Gợi ý giá tốt nhất\n\n"
+            "Ví dụ:\n"
             "`tai nghe bluetooth`\n"
-            "`áo thun nam`\n"
-            "`kem dưỡng da`",
-            parse_mode='Markdown'
-        )
+            "`so sánh airpods và galaxy buds`"
+        , parse_mode='Markdown')
         return
 
-    if text.lower() in ['/help', 'help']:
-        await update.message.reply_text("💡 Gõ từ khóa sản phẩm bạn muốn tìm...")
+    await update.message.reply_text("🤖 Đang phân tích và so sánh...")
+
+    products = await search_shopee(text, limit=6)
+
+    if not products:
+        await update.message.reply_text("❌ Không tìm thấy sản phẩm phù hợp.")
         return
 
-    # Tìm kiếm
-    await update.message.reply_text(f"🔍 Đang tìm kiếm sản phẩm cho **{text}**...", parse_mode='Markdown')
-
-    products = await search_shopee(text, limit=5)
-
-    if not products or not products[0].get('link'):
-        await update.message.reply_text("❌ Không tìm thấy sản phẩm phù hợp. Thử từ khóa khác nhé!")
-        return
-
-    # Format kết quả
-    response = f"**🔎 Kết quả cho: {text}**\n\n"
-    for i, p in enumerate(products, 1):
-        response += f"{i}. **{p['name']}**\n"
-        response += f"💰 {p['price']}\n"
-        response += f"🔗 [Mua ngay]({p['link']})\n\n"
-
-    await update.message.reply_text(response, parse_mode='Markdown', disable_web_page_preview=True)
+    analysis = await ai_analyze_and_compare(products, text)
+    await update.message.reply_text(analysis, parse_mode='Markdown', disable_web_page_preview=True)
 
 
-# ====================== MAIN ======================
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        log.error("❌ TELEGRAM_TOKEN chưa được thiết lập!")
+        log.error("TELEGRAM_TOKEN not set")
         return
 
-    # Start health server
-    threading.Thread(target=run_health_server, daemon=True).start()
-
     app = Application.builder().token(token).build()
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    log.info("🚀 Shopee Hunter Bot started successfully!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
+    log.info("🚀 Shopee Hunter Bot - AI Comparison started!")
+    app.run_pol
