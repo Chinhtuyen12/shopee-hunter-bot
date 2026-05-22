@@ -1,62 +1,71 @@
 #!/usr/bin/env python3
-"""Shopee Hunter Bot - Final Simple"""
+"""Shopee Hunter Bot - Simple Version using SerpAPI"""
 
 import os
 import logging
-import sys
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
-
-# Fix path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-try:
-    from shopee_tool import search_shopee
-except ImportError:
-    from tools.shopee import search_shopee   # fallback
+import httpx
+import json
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
+async def search_shopee_serpapi(keyword: str, limit: int = 5):
+    api_key = os.getenv("SERPAPI_KEY")
+    if not api_key:
+        return [{"name": "Chưa cấu hình SERPAPI_KEY", "price": "", "link": ""}]
+
+    url = "https://serpapi.com/search"
+    params = {
+        "engine": "google",
+        "q": f"{keyword} site:shopee.vn",
+        "api_key": api_key,
+        "num": limit * 2
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(url, params=params)
+        data = response.json()
+
+    products = []
+    for result in data.get("shopping_results", [])[:limit]:
+        products.append({
+            "name": result.get("title", "N/A"),
+            "price": result.get("price", "N/A"),
+            "link": result.get("link", "#")
+        })
+    return products
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-    
     text = update.message.text.strip()
-    user_id = str(update.effective_user.id)
-
-    if user_id != os.getenv("ALLOWED_USER_ID", ""):
-        await update.message.reply_text("❌ Bạn không có quyền sử dụng bot này.")
-        return
 
     if text.startswith('/start'):
-        await update.message.reply_text("👋 Gõ từ khóa sản phẩm bạn muốn tìm...")
+        await update.message.reply_text("👋 Gõ từ khóa sản phẩm bạn muốn tìm trên Shopee...")
         return
 
-    await update.message.reply_text(f"🔍 Đang tìm cho: **{text}**...", parse_mode='Markdown')
+    await update.message.reply_text(f"🔍 Đang tìm trên Shopee: **{text}**...", parse_mode='Markdown')
 
-    try:
-        products = await search_shopee(text, limit=5)
-        
-        if not products:
-            await update.message.reply_text("❌ Không tìm thấy sản phẩm nào.")
-            return
+    products = await search_shopee_serpapi(text, limit=5)
 
-        response = f"**Kết quả tìm kiếm: {text}**\n\n"
-        for i, p in enumerate(products, 1):
-            response += f"{i}. **{p.get('name', 'N/A')}**\n"
-            response += f"💰 {p.get('price', 'N/A')}\n"
-            response += f"🔗 {p.get('link', '#')}\n\n"
+    if not products:
+        await update.message.reply_text("❌ Không tìm thấy sản phẩm.")
+        return
 
-        await update.message.reply_text(response, parse_mode='Markdown', disable_web_page_preview=True)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Lỗi: {str(e)}")
+    response = f"**Kết quả Shopee cho: {text}**\n\n"
+    for i, p in enumerate(products, 1):
+        response += f"{i}. **{p['name']}**\n💰 {p['price']}\n🔗 {p['link']}\n\n"
+
+    await update.message.reply_text(response, parse_mode='Markdown', disable_web_page_preview=True)
 
 
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        log.error("TELEGRAM_TOKEN not set!")
+        log.error("TELEGRAM_TOKEN not set")
         return
 
     app = Application.builder().token(token).build()
