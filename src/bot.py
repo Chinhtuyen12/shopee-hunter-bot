@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shopee Hunter Bot - Using Selenium"""
+"""Shopee Hunter Bot - Selenium Version"""
 
 import os
 import logging
@@ -10,26 +10,24 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# ====================== SELENIUM SEARCH ======================
 async def search_shopee_selenium(keyword: str, limit: int = 5):
     try:
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
         import time
 
         options = Options()
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
         options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
         driver = webdriver.Chrome(options=options)
         driver.get(f"https://shopee.vn/search?keyword={keyword.replace(' ', '%20')}")
 
-        await asyncio.sleep(5)  # Chờ load trang
+        await asyncio.sleep(6)  # Chờ load
 
         products = []
         items = driver.find_elements(By.CSS_SELECTOR, 'div[data-sqe="item"]')[:10]
@@ -38,13 +36,15 @@ async def search_shopee_selenium(keyword: str, limit: int = 5):
             try:
                 name = item.find_element(By.CSS_SELECTOR, 'div[data-sqe="name"] div').text.strip()
                 price = item.find_element(By.CSS_SELECTOR, 'div[data-sqe="price"] span').text.strip()
-                link = item.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                link_tag = item.find_element(By.TAG_NAME, 'a')
+                link = link_tag.get_attribute('href')
 
                 if name and link:
+                    full_link = "https://shopee.vn" + link if not link.startswith("http") else link
                     products.append({
                         "name": name[:70],
                         "price": price,
-                        "link": "https://shopee.vn" + link if not link.startswith("http") else link
+                        "link": full_link
                     })
                     if len(products) >= limit:
                         break
