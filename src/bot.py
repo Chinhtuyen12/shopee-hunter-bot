@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Tara Bot — Telegram bot entry point."""
+"""Shopee Hunter Bot."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import threading
+import search_shopee
+from .tools.shopee
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -58,49 +60,48 @@ def authorize(update: Update) -> bool:
 
 # ── Handlers ─────────────────────────────────────────────────────────
 
-async def start(update: Update, _context) -> None:
-    if not authorize(update):
-        await update.message.reply_text(
-            "⛔ Bạn không phải chủ bot này."
-        )
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
         return
 
-    await update.message.reply_text(
-        "👋 *Tara Bot — Săn giá, tìm deal*\n\n"
-        "Mình có thể:\n"
-        "✈️ Tìm vé máy bay: *\"vé SG Đà Nẵng cuối tuần\"*\n"
-        "🛒 So sánh giá: *\"iPhone 16 giá bao nhiêu\"*\n\n"
-        "Thử đi ạ!",
-        parse_mode="Markdown",
-    )
-
-
-async def handle_message(update: Update, _context) -> None:
-    if not authorize(update):
-        return
-
-    uid = update.effective_user.id
     text = update.message.text.strip()
+    user_id = update.effective_user.id
 
-    if not text:
+    # Kiểm tra user được phép
+    if str(user_id) != str(Config.ALLOWED_USER_ID):
+        await update.message.reply_text("❌ Bạn không có quyền sử dụng bot này.")
         return
 
-    log.info(f"[{uid}] {text}")
-
-    # Show typing while thinking
-    await update.message.chat.send_action("typing")
-
-    try:
-        agent = get_agent(uid)
-        reply = agent.chat(text)
-
-        await update.message.reply_text(reply, parse_mode="Markdown")
-    except Exception as e:
-        log.exception("Error processing message")
+    # Xử lý lệnh
+    if text.startswith('/start'):
         await update.message.reply_text(
-            f"😵 Có lỗi xảy ra: {e}\nThử lại sau nhé!"
+            "👋 Chào bạn! Tôi là *Shopee Hunter Bot*\n\n"
+            "Gõ từ khóa bạn muốn tìm, ví dụ:\n"
+            "`tai nghe bluetooth`\n"
+            "`quần jeans nam`\n"
+            "`kem dưỡng da`\n\n"
+            "Tôi sẽ tìm Top 5 sản phẩm tốt nhất cho bạn!",
+            parse_mode='Markdown'
         )
 
+    elif text.lower() in ['/help', 'help']:
+        await update.message.reply_text("Gõ từ khóa sản phẩm bạn muốn tìm...")
+
+    else:
+        # Xử lý tìm kiếm sản phẩm
+        keyword = text.strip()
+        await update.message.reply_text(f"🔍 Đang tìm kiếm top sản phẩm cho **{keyword}**...", parse_mode='Markdown')
+        
+        # Gọi tool Shopee
+        products = await search_shopee(keyword, limit=5)
+        
+        if not products or "Lỗi" in products[0]["name"]:
+            await update.message.reply_text("❌ Không tìm thấy sản phẩm nào. Thử từ khóa khác nhé!")
+            return
+
+        # Gửi cho LLM phân tích
+        analysis = await analyze_shopee_products(products, keyword)
+        await update.message.reply_text(analysis, parse_mode='Markdown', disable_web_page_preview=True)
 
 async def reset(update: Update, _context) -> None:
     """Reset conversation history."""
@@ -165,6 +166,31 @@ def main() -> None:
     log.info("🚀 Tara Bot started")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
+async def analyze_shopee_products(products: list, keyword: str):
+    """Dùng LLM phân tích và format kết quả"""
+    prompt = f"""
+    Từ khóa: {keyword}
+    Top 5 sản phẩm tìm được:
+    {json.dumps(products, ensure_ascii=False, indent=2)}
+
+    Hãy phân tích và trả lời theo định dạng đẹp:
+    - Top 5 sản phẩm (có số thứ tự)
+    - So sánh ngắn gọn (giá, rating, lượt bán)
+    - Khuyến nghị sản phẩm tốt nhất
+    - Chèn link mua (dùng link gốc trước)
+    """
+
+    # Gọi LLM (dùng hệ thống có sẵn của bot)
+    response = await llm_client.chat.completions.create(
+        model=Config.OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=1200
+    )
+    
+    return response.choices[0].message.content
 
 if __name__ == "__main__":
     main()
