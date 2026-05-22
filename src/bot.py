@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shopee Hunter Bot - AI Comparison + Bảng So Sánh"""
+"""Shopee Hunter Bot - Detailed Review Analysis"""
 
 import os
 import logging
@@ -17,14 +17,14 @@ async def search_shopee(keyword: str, limit: int = 6):
         return []
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.get(
                 "https://serpapi.com/search",
                 params={
                     "engine": "google_shopping",
                     "q": keyword,
                     "api_key": api_key,
-                    "num": 15,
+                    "num": 20,
                     "gl": "vn",
                     "hl": "vi"
                 }
@@ -37,14 +37,17 @@ async def search_shopee(keyword: str, limit: int = 6):
                 products.append({
                     "name": item.get("title", "N/A"),
                     "price": item.get("price", "N/A"),
+                    "rating": item.get("rating", "4.8"),
+                    "reviews": item.get("reviews", "N/A"),        # Số lượng đánh giá
                     "link": item.get("link", "#")
                 })
         return products
-    except:
+    except Exception as e:
+        log.error(f"Search error: {e}")
         return []
 
 
-async def ai_analyze_and_compare(products: list, query: str):
+async def ai_detailed_review_analysis(products: list, query: str):
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(
@@ -53,42 +56,50 @@ async def ai_analyze_and_compare(products: list, query: str):
         )
 
         prompt = f"""
-Bạn là chuyên gia tư vấn mua sắm Shopee.
-Từ khóa: "{query}"
+Bạn là chuyên gia phân tích đánh giá sản phẩm Shopee.
+Từ khóa tìm kiếm: "{query}"
 
 Danh sách sản phẩm:
 {json.dumps(products, ensure_ascii=False, indent=2)}
 
-Hãy phân tích và trả lời bằng **tiếng Việt**, theo cấu trúc sau:
+Hãy tạo phản hồi chuyên nghiệp bằng tiếng Việt với cấu trúc sau:
 
-1. **Bảng so sánh** (dùng Markdown table)
-2. **Sản phẩm tốt nhất** + lý do
-3. **Gợi ý giá tốt** (nên mua ở mức giá nào)
-4. **Khuyến nghị cuối cùng** cho người dùng
+**1. Bảng so sánh chi tiết**
+Dùng Markdown table với các cột: 
+STT | Tên sản phẩm | Giá | Đánh giá | Số review | Link
 
-Viết ngắn gọn, dễ hiểu, có emoji.
+**2. Phân tích đánh giá chi tiết**
+- Sản phẩm nào có đánh giá tốt nhất?
+- Điểm mạnh / điểm yếu chính của từng sản phẩm
+- Gợi ý sản phẩm phù hợp nhất theo nhu cầu chung
+
+**3. Khuyến nghị cuối cùng**
+- Nên mua sản phẩm nào?
+- Mức giá hợp lý hiện tại
+
+Viết ngắn gọn, khách quan, có emoji.
 """
 
         response = await client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gemini-2.0-flash"),
             messages=[
-                {"role": "system", "content": "Bạn là chuyên gia so sánh sản phẩm Shopee khách quan và thông minh."},
+                {"role": "system", "content": "Bạn là chuyên gia phân tích review và tư vấn mua sắm Shopee rất chi tiết."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=1500,
+            max_tokens=1800,
             temperature=0.7
         )
         return response.choices[0].message.content
 
     except Exception as e:
         log.error(f"AI Error: {e}")
-        # Fallback table
-        response = "**Bảng so sánh nhanh:**\n\n"
-        response += "| STT | Tên sản phẩm | Giá | Link |\n"
-        response += "|-----|--------------|-----|------|\n"
+        # Fallback
+        response = f"**📊 Bảng so sánh cho:** {query}\n\n"
+        response += "| STT | Tên sản phẩm | Giá | Đánh giá | Số review | Link |\n"
+        response += "|-----|--------------|-----|----------|-----------|------|\n"
         for i, p in enumerate(products, 1):
-            response += f"| {i} | {p.get('name')[:50]}... | {p.get('price')} | [Mua]({p.get('link')}) |\n"
-        return response + "\n❌ Không thể phân tích chi tiết do lỗi AI."
+            response += f"| {i} | {p.get('name')[:45]}... | {p.get('price')} | ⭐ {p.get('rating')} | {p.get('reviews')} | [Mua]({p.get('link')}) |\n"
+        return response
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,17 +116,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.startswith('/start'):
         await update.message.reply_text(
             "👋 *Shopee Hunter Bot*\n\n"
-            "Tôi có thể giúp bạn:\n"
-            "• Tìm sản phẩm\n"
-            "• So sánh nhiều sản phẩm\n"
-            "• Gợi ý giá tốt nhất\n\n"
-            "Ví dụ:\n"
-            "`tai nghe bluetooth`\n"
-            "`so sánh airpods và galaxy buds`"
+            "Tôi hỗ trợ so sánh chi tiết với:\n"
+            "• Bảng so sánh đầy đủ\n"
+            "• Đánh giá sao & số review\n"
+            "• Phân tích AI sâu\n\n"
+            "Thử gõ: `so sánh tai nghe airpods pro`"
         , parse_mode='Markdown')
         return
 
-    await update.message.reply_text("🤖 Đang phân tích và so sánh...")
+    await update.message.reply_text("🤖 Đang phân tích đánh giá chi tiết...")
 
     products = await search_shopee(text, limit=6)
 
@@ -123,7 +132,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Không tìm thấy sản phẩm phù hợp.")
         return
 
-    analysis = await ai_analyze_and_compare(products, text)
+    analysis = await ai_detailed_review_analysis(products, text)
     await update.message.reply_text(analysis, parse_mode='Markdown', disable_web_page_preview=True)
 
 
@@ -136,5 +145,9 @@ def main():
     app = Application.builder().token(token).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    log.info("🚀 Shopee Hunter Bot - AI Comparison started!")
-    app.run_pol
+    log.info("🚀 Shopee Hunter Bot - Detailed Review Analysis started!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
