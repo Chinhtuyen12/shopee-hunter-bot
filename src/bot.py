@@ -9,8 +9,9 @@ import sys
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Thêm đường dẫn để import tool
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# === FIX IMPORT PATH ===
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# =======================
 
 from telegram import Update
 from telegram.ext import (
@@ -21,13 +22,8 @@ from telegram.ext import (
     ContextTypes,
 )
 
+# Import tool
 from tools.shopee import search_shopee
-
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    level=logging.INFO,
-)
-log = logging.getLogger("shopee-hunter-bot")
 
 SYSTEM_PROMPT = """
 Bạn là **Shopee Hunter Bot** - chuyên gia săn hàng Shopee thông minh.
