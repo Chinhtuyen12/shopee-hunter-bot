@@ -7,7 +7,7 @@ import asyncio
 import logging
 import threading
 import search_shopee
-from .tools.shopee
+from tools.shopee
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
