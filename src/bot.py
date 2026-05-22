@@ -5,8 +5,12 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Thêm đường dẫn để import tool
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from telegram import Update
 from telegram.ext import (
@@ -17,7 +21,6 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# Import tool Shopee
 from tools.shopee import search_shopee
 
 logging.basicConfig(
