@@ -1,78 +1,62 @@
 #!/usr/bin/env python3
-"""Shopee Hunter Bot - Tối ưu tìm kiếm mạnh"""
+"""Shopee Hunter Bot - Using Selenium"""
 
 import os
 import logging
-import httpx
+import asyncio
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-async def search_shopee(keyword: str, limit: int = 5):
-    api_key = os.getenv("SERPAPI_KEY")
-    if not api_key:
-        return [{"name": "❌ Chưa set SERPAPI_KEY", "price": "", "link": ""}]
-
-    search_queries = [
-        f"{keyword} shopee",
-        f"{keyword} site:shopee.vn",
-        keyword,
-        f"mua {keyword}"
-    ]
-
-    products = []
+# ====================== SELENIUM SEARCH ======================
+async def search_shopee_selenium(keyword: str, limit: int = 5):
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            for q in search_queries:
-                if len(products) >= limit:
-                    break
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        import time
 
-                resp = await client.get(
-                    "https://serpapi.com/search",
-                    params={
-                        "engine": "google",
-                        "q": q,
-                        "api_key": api_key,
-                        "num": 20,
-                        "gl": "vn",
-                        "hl": "vi"
-                    }
-                )
-                data = resp.json()
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-                # Ưu tiên link sản phẩm trực tiếp
-                for item in data.get("shopping_results", []):
-                    link = item.get("link", "")
-                    if "shopee.vn/product/" in link or "shopee.vn/" in link:
-                        products.append({
-                            "name": item.get("title", "N/A"),
-                            "price": item.get("price", "N/A"),
-                            "rating": item.get("rating", "4.8"),
-                            "link": link
-                        })
-                        if len(products) >= limit:
-                            break
+        driver = webdriver.Chrome(options=options)
+        driver.get(f"https://shopee.vn/search?keyword={keyword.replace(' ', '%20')}")
 
-                if len(products) < limit:
-                    for item in data.get("organic_results", []):
-                        link = item.get("link", "")
-                        if "shopee.vn" in link and len(link) > 50:  # link dài thường là link sản phẩm
-                            products.append({
-                                "name": item.get("title", "N/A"),
-                                "price": "Giá trên Shopee",
-                                "rating": "4.8",
-                                "link": link
-                            })
-                            if len(products) >= limit:
-                                break
+        await asyncio.sleep(5)  # Chờ load trang
 
+        products = []
+        items = driver.find_elements(By.CSS_SELECTOR, 'div[data-sqe="item"]')[:10]
+
+        for item in items:
+            try:
+                name = item.find_element(By.CSS_SELECTOR, 'div[data-sqe="name"] div').text.strip()
+                price = item.find_element(By.CSS_SELECTOR, 'div[data-sqe="price"] span').text.strip()
+                link = item.find_element(By.TAG_NAME, 'a').get_attribute('href')
+
+                if name and link:
+                    products.append({
+                        "name": name[:70],
+                        "price": price,
+                        "link": "https://shopee.vn" + link if not link.startswith("http") else link
+                    })
+                    if len(products) >= limit:
+                        break
+            except:
+                continue
+
+        driver.quit()
         return products[:limit]
 
     except Exception as e:
-        log.error(f"Search error: {e}")
-        return [{"name": "Lỗi kết nối tìm kiếm", "price": "", "link": ""}]
+        log.error(f"Selenium error: {e}")
+        return [{"name": f"Lỗi Selenium: {str(e)}", "price": "", "link": ""}]
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -87,18 +71,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text.startswith('/start'):
-        await update.message.reply_text("👋 Nhập từ khóa sản phẩm bạn muốn tìm (ví dụ: bình đựng nước mini, tai nghe bluetooth...)")
+        await update.message.reply_text("👋 Nhập từ khóa sản phẩm bạn muốn tìm...")
         return
 
-    await update.message.reply_text(f"🔍 Đang tìm top sản phẩm cho **{text}**...", parse_mode='Markdown')
+    await update.message.reply_text(f"🔍 Đang tìm top 5 sản phẩm cho **{text}**...", parse_mode='Markdown')
 
-    products = await search_shopee(text, limit=5)
+    products = await search_shopee_selenium(text, limit=5)
 
     if not products:
-        await update.message.reply_text("❌ Vẫn không tìm thấy. Thử từ khóa đơn giản hơn (ví dụ: `tai nghe`, `bình nước`, `áo thun`)")
+        await update.message.reply_text("❌ Không tìm thấy sản phẩm. Thử từ khóa khác.")
         return
 
-    response = f"**🔎 Top sản phẩm cho:** {text}\n\n"
+    response = f"**🔎 Top 5 sản phẩm cho:** {text}\n\n"
     for i, p in enumerate(products, 1):
         response += f"{i}. **{p['name']}**\n"
         response += f"💰 {p['price']}\n"
@@ -116,7 +100,7 @@ def main():
     app = Application.builder().token(token).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    log.info("🚀 Shopee Hunter Bot started!")
+    log.info("🚀 Shopee Hunter Bot with Selenium started!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
